@@ -29,7 +29,7 @@ pipeline {
             steps {
                 withSonarQubeEnv('sonarqube') {
                     sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=springboot -Dsonar.projectKey=springboot \
-                            -Dsonar.java.binaries=target'''
+                            -Dsonar.java.binaries=target '''
                 }
             }
         }
@@ -75,11 +75,11 @@ pipeline {
                     withCredentials([usernamePassword(credentialsId: 'github-cred', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
                         sh '''
                             git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/${GIT_USERNAME}/springbootapp-CD.git
-                            cd springbootapp-CD/bankapp 
-                            sed -i "s|parthu210/springbootapp:.*|parthu210/springbootapp:${IMAGE_TAG}|" bankapp-ds.yml
+                            cd springbootapp-CD 
+                            sed -i "s|parthu210/springbootapp:.*|parthu210/springbootapp:${IMAGE_TAG}|" deployment.yml
                             git config user.name "${GIT_USERNAME}"
                             git config user.email "parrthshaah@gmail.com"
-                            git add bankapp-ds.yml
+                            git add deployment.yml
                             git commit -m "updated image tag to ${IMAGE_TAG}"
                             git push origin main
                         '''
