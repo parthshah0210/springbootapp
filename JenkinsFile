@@ -29,7 +29,7 @@ pipeline {
             steps {
                 withSonarQubeEnv('sonarqube') {
                     sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=springboot -Dsonar.projectKey=springboot \
-                            -Dsonar.java.binaries=target '''
+                            -Dsonar.java.binaries=target'''
                 }
             }
         }
