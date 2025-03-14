@@ -1,68 +1,91 @@
 pipeline {
-  agent {
-    docker {
-      image 'abhishekf5/maven-abhishek-docker-agent:v1'
-      args '--user root -v /var/run/docker.sock:/var/run/docker.sock' // mount Docker socket to access the host's Docker daemon
+    agent any
+    tools {
+        maven 'maven3'
+        jdk 'jdk17'
     }
-  }
-  stages {
-    stage('Checkout') {
-      steps {
-        sh 'echo passed'
-        //git branch: 'main', url: 'https://github.com/iam-veeramalla/Jenkins-Zero-To-Hero.git'
-      }
+    environment {
+        SCANNER_HOME= tool 'sonarqube'
+        IMAGE_TAG="v${BUILD_NUMBER}"
     }
-    stage('Build and Test') {
-      steps {
-        sh 'ls -ltr'
-        // build the project and create a JAR file
-        sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
-      }
-    }
-    stage('Static Code Analysis') {
-      environment {
-        SONAR_URL = "http://54.242.170.24:9000"
-      }
-      steps {
-        withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
-          sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}'
-        }
-      }
-    }
-    stage('Build and Push Docker Image') {
-      environment {
-        DOCKER_IMAGE = "parthu210/ultimate-cicd:${BUILD_NUMBER}"
-        // DOCKERFILE_LOCATION = "java-maven-sonar-argocd-helm-k8s/spring-boot-app/Dockerfile"
-        REGISTRY_CREDENTIALS = credentials('docker-cred')
-      }
-      steps {
-        script {
-            sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t ${DOCKER_IMAGE} .'
-            def dockerImage = docker.image("${DOCKER_IMAGE}")
-            docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
-                dockerImage.push()
+
+    stages {
+        stage('git checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/parthshah0210/springbootapp.git'
             }
         }
-      }
-    }
-    stage('Update Deployment File') {
-        environment {
-            GIT_REPO_NAME = "Jenkins-Zero-To-Hero"
-            GIT_USER_NAME = "parthshah0210"
+        stage('compile') {
+            steps {
+                    sh 'mvn clean compile'
+                }
+            }
+        stage('trivy file scan') {
+            steps {
+                sh 'trivy fs --format table -o filescan.html .'
+            }
         }
-        steps {
-            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                sh '''
-                    git config user.email "parrthshaah@gmail.com"
-                    git config user.name "parthshah0210"
-                    BUILD_NUMBER=${BUILD_NUMBER}
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
-                '''
+        stage('sonarqube scanner') {
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=springboot -Dsonar.projectKey=springboot \
+                            -Dsonar.java.binaries=target'''
+                }
+            }
+        }
+        stage('build') {
+            steps {
+                sh 'mvn install'
+            }
+        }
+        stage('deploy') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'maven-file', jdk: 'jdk17', maven: 'maven3', mavenSettingsConfig: '', traceability: true) {
+                    sh 'mvn deploy'
+                }
+            }
+        }
+        stage('docker build and tag') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'dockerhub') {
+                        sh 'docker build -t parthu210/springbootapp:$IMAGE_TAG .'
+                    }
+                }
+            }
+        }
+        stage('trivy image scan') {
+            steps {
+                sh 'trivy image --format table -o image-scan.html parthu210/springbootapp:$IMAGE_TAG'
+            }
+        }
+        stage('push image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'dockerhub') {
+                        sh 'docker push parthu210/springbootapp:$IMAGE_TAG'
+                    }
+                }
+            }
+        }
+        stage('update menifestfile') {
+            steps {
+                script {
+                    cleanWs()
+                    withCredentials([usernamePassword(credentialsId: 'github-cred', passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                        sh '''
+                            git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/${GIT_USERNAME}/springbootapp-CD.git
+                            cd springbootapp-CD/bankapp 
+                            sed -i "s|parthu210/springbootapp:.*|parthu210/springbootapp:${IMAGE_TAG}|" bankapp-ds.yml
+                            git config user.name "${GIT_USERNAME}"
+                            git config user.email "parrthshaah@gmail.com"
+                            git add bankapp-ds.yml
+                            git commit -m "updated image tag to ${IMAGE_TAG}"
+                            git push origin main
+                        '''
+                    }    
+                }
             }
         }
     }
-  }
 }
